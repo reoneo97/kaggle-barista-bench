@@ -12,9 +12,14 @@ class Order(BaseModel):
     quantity: int
     modifiers: list[str]
 
-# TODO: Should try to use Enums to better fix the input
 
-
-class Order(BaseModel):
-    name:str = Field(description='Name of the item from the menu')
-    quantity: int =Field(gt=0, description='Number of items')
+'''
+#TODO:
+1. Explore using Enums for better input validation
+2. Separate by Food and Drink
+3. Convert to Field
+4. Lastly see if theres a good way of using the LLM to suggest the schema automatically
+'''
+# class Order(BaseModel):
+#     name:str = Field(description='Name of the item from the menu')
+#     quantity: int =Field(gt=0, description='Number of items')
