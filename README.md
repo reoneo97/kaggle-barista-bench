@@ -27,3 +27,10 @@ This repository is to store code for the [Barista Bench](https://www.kaggle.com/
 - Total Price - Exact Match
 - Drink Name and Size
 - List of Modifiers
+
+
+### 10th Feb
+- Looked at some of the results and interestingly the one with the highest loss came from mathematical errors compared to problems with the JSON
+
+## Interesting Links
+https://www.kaggle.com/code/atharva0577/llm-barista-prefix-caching-gemma

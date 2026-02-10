@@ -1,7 +1,6 @@
 from pydantic import BaseModel, Field
 
 
-
 class OrderList(BaseModel):
     items: list[Order]
     total_price: float

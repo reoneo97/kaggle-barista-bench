@@ -1,5 +1,7 @@
 from pathlib import Path
+
 from ..schema import OrderList
+
 
 class BaristaPrompt:
 

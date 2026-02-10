@@ -1,9 +1,16 @@
-import pandas as pd
-import numpy as np
-from ..models.load_model import load_pretrained_model
-import requests 
-from ..schema import Order, OrderList
+import json
+import os
 
+import numpy as np
+import pandas as pd
+from pydantic import ValidationError
+import requests
+
+from ..models.load_model import load_pretrained_model
+from ..prompt.default import BaristaPrompt
+from ..schema import Order, OrderList
+from tqdm import tqdm
+import re
 def order_loss(y_true: Order, y_pred: Order) -> float:
     loss = 0 
     loss += (y_true.name != y_pred.name) * 5
@@ -14,6 +21,7 @@ def order_loss(y_true: Order, y_pred: Order) -> float:
     return loss
 
 def loss_fn(y_true: OrderList, y_pred: OrderList):
+    
     total_loss = abs(y_true.total_price - y_pred.total_price)
     
     for i, item in enumerate(y_true.items):
@@ -41,15 +49,81 @@ def load_training_set(train_path: str, train_pct = 0.8):
 
 
 def evaluate_pretrained_model(prompt: str, train_path: str, model_id: str):
-    df = load_training_set()
     model = load_pretrained_model()
 
-def evaluate_api_model(prompt: str, train_path: str, model_id: str):
-    df = load_training_set()
 
-    pass
+# def _extract_from_code_blocks(text: str) -> Optional[Any]:
+#     """Extract JSON from markdown code blocks."""
+#     # Look for ```json or ``` code blocks
+#     patterns = [
+#         r'```json\s*([\s\S]*?)\s*```',
+#     ]
+    
+#     for pattern in patterns:
+#         matches = re.findall(pattern, text)
+#         for match in matches:
+#             try:
+#                 cleaned = RobustJSONParser._clean_json_string(match)
+#                 return json.loads(cleaned)
+#             except:
+#                 continue
+#     return None
 
 
+def evaluate_api_model(
+    model_id: str, prompt: BaristaPrompt, dataset: pd.DataFrame,
+    reasoning: bool = False
+):
+    # df = load_training_set(train_path=train_path)
+    dataset = dataset.copy()
+    dataset['expected_order'] = dataset['expected_json'].apply(
+        lambda x: OrderList.model_validate_json(x)
+    )
+    preds = []
+    losses = []
+    for _, row in tqdm(dataset.iterrows(), total=len(dataset)):
+        order = row['order']
+        messages = prompt.format_llm_input(order)
+
+        payload = {
+            "model": model_id,
+            "messages": messages,
+            'reasoning':{
+                'enabled': reasoning
+            }
+        }
+        response = requests.post(
+            url="https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {os.environ['API_KEY']}",
+                "Content-Type": "application/json",
+            },
+            data=json.dumps(payload),
+        )
+        out_response = response.json()
+        try:
+        
+            out_message = out_response['choices'][0]['message']['content']
+            ptn =  r'```json\s*([\s\S]*?)\s*```'
+            matches = re.findall(ptn, out_message)
+            
+            if not matches:
+                y_pred= OrderList.model_validate_json(out_message)
+            else:
+                y_pred= OrderList.model_validate_json(matches[0])
+            
+            losses.append(loss_fn(row['expected_order'], y_pred))
+            preds.append(y_pred.model_dump_json())
+        except Exception as e:
+            print(e)
+            losses.append(500)
+            print("Error in response:", out_response)
+            preds.append(out_response)
+
+    dataset['pred'] = preds
+    dataset['loss'] = losses
+    
+    return dataset
 
 
 def generate_submission():
