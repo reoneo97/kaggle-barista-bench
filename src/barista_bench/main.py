@@ -1,5 +1,6 @@
-import barista_bench.config
 import os
+
+import barista_bench.config
 
 if __name__ == '__main__':
     print(os.environ['HF_TOKEN'])

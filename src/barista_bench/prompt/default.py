@@ -19,7 +19,8 @@ class BaristaPrompt:
         messages = [
             {
                 "role": "system",
-                "content":self.system_prompt
+                "content":self.system_prompt,
+                "cache_control":{"type":"ephemeral"}
             },
             {
                 "role": "user",

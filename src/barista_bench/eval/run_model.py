@@ -1,16 +1,19 @@
 import json
 import os
+import re
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from pydantic import ValidationError
 import requests
+from pydantic import ValidationError
+from tqdm import tqdm
 
 from ..models.load_model import load_pretrained_model
 from ..prompt.default import BaristaPrompt
 from ..schema import Order, OrderList
-from tqdm import tqdm
-import re
+
+
 def order_loss(y_true: Order, y_pred: Order) -> float:
     loss = 0 
     loss += (y_true.name != y_pred.name) * 5
@@ -58,7 +61,7 @@ def evaluate_pretrained_model(prompt: str, train_path: str, model_id: str):
 #     patterns = [
 #         r'```json\s*([\s\S]*?)\s*```',
 #     ]
-    
+
 #     for pattern in patterns:
 #         matches = re.findall(pattern, text)
 #         for match in matches:
@@ -72,7 +75,7 @@ def evaluate_pretrained_model(prompt: str, train_path: str, model_id: str):
 
 def evaluate_api_model(
     model_id: str, prompt: BaristaPrompt, dataset: pd.DataFrame,
-    reasoning: bool = False
+    reasoning: bool = False, provider: list[str] = None
 ):
     # df = load_training_set(train_path=train_path)
     dataset = dataset.copy()
@@ -90,17 +93,29 @@ def evaluate_api_model(
             "messages": messages,
             'reasoning':{
                 'enabled': reasoning
-            }
-        }
-        response = requests.post(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {os.environ['API_KEY']}",
-                "Content-Type": "application/json",
             },
-            data=json.dumps(payload),
-        )
-        out_response = response.json()
+            # 'provider':provider
+        }
+        if provider is not None:
+            dict_ = {}
+            dict_['order'] = provider
+            payload['provider'] = dict_
+        # print(payload)
+        try:
+            response = requests.post(
+                url="https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {os.environ['API_KEY']}",
+                    "Content-Type": "application/json",
+                },
+                data=json.dumps(payload),
+                timeout=30,
+            )
+            out_response = response.json()
+        except requests.exceptions.Timeout:
+            losses.append(500)
+            preds.append({'text':'Error with API'})
+            continue
         try:
         
             out_message = out_response['choices'][0]['message']['content']
@@ -126,8 +141,153 @@ def evaluate_api_model(
     return dataset
 
 
-def generate_submission():
-    pass
+def generate_test_results(
+        model_id: str, prompt: BaristaPrompt,
+        dataset: pd.DataFrame, reasoning:bool = False,
+        provider:list[str] = None
+    ):
+    dataset = dataset.copy()
+
+
+def generate_api_submission(
+        model_id: str, prompt: BaristaPrompt,
+        dataset: pd.DataFrame,  output_path: str, reasoning:bool = False,
+        provider:list[str] = None,
+    ):
+
+    num_lines = 0 
+    if Path(output_path).exists():
+        num_lines = len(open(output_path,'r').readlines())
+        print('Number of lines', num_lines)
+        if num_lines:
+            dataset = dataset.iloc[num_lines-1:].copy()
+
+    with open(output_path, 'a') as f:
+
+        if not num_lines:
+            f.write("row,order\n")
+
+        for _, row in tqdm(dataset.iterrows(), total=len(dataset)):
+            order = row["order"]
+            messages = prompt.format_llm_input(order)
+
+            payload = {
+                "model": model_id,
+                "messages": messages,
+                "reasoning": {"enabled": reasoning},
+                # 'provider':provider
+            }
+            if provider is not None:
+                dict_ = {}
+                dict_["order"] = provider
+                payload["provider"] = dict_
+            # print(payload)
+            try:
+                response = requests.post(
+                    url="https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {os.environ['API_KEY']}",
+                        "Content-Type": "application/json",
+                    },
+                    data=json.dumps(payload),
+                    timeout=30,
+                )
+                out_response = response.json()
+            except requests.exceptions.Timeout:
+                pred = '{"text": "Error with API"}'
+                continue
+            try:
+
+                out_message = out_response["choices"][0]["message"]["content"]
+                ptn = r"```json\s*([\s\S]*?)\s*```"
+                matches = re.findall(ptn, out_message)
+
+                if not matches:
+                    y_pred = OrderList.model_validate_json(out_message)
+                else:
+                    y_pred = OrderList.model_validate_json(matches[0])
+
+                pred = y_pred.model_dump_json()
+            except Exception as e:
+                print(e)
+                print("Error in response:", out_response)
+                pred = out_response
+
+            f.write(f"{row['id']},{pred}\n")
+
+    return dataset
+
+
+def generate_api_submission2(
+    model_id: str,
+    prompt: BaristaPrompt,
+    dataset: pd.DataFrame,
+    output_path: str,
+    reasoning: bool = False,
+    provider: list[str] = None,
+):
+
+    num_lines = 0
+    if Path(output_path).exists():
+        num_lines = len(open(output_path, "r").readlines())
+        print("Number of lines", num_lines)
+        if num_lines:
+            dataset = dataset.iloc[num_lines - 1 :].copy()
+
+    with open(output_path, "a") as f:
+
+        if not num_lines:
+            f.write("id,predicted_json\n")
+
+        for _, row in tqdm(dataset.iterrows(), total=len(dataset)):
+            order = row["order"]
+            messages = prompt.format_llm_input(order)
+
+            payload = {
+                "model": model_id,
+                "messages": messages,
+                "reasoning": {"enabled": reasoning},
+                # 'provider':provider
+            }
+            if provider is not None:
+                dict_ = {}
+                dict_["order"] = provider
+                payload["provider"] = dict_
+            # print(payload)
+            try:
+                response = requests.post(
+                    url="https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {os.environ['API_KEY']}",
+                        "Content-Type": "application/json",
+                    },
+                    data=json.dumps(payload),
+                    timeout=30,
+                )
+                out_response = response.json()
+            except requests.exceptions.Timeout:
+                pred = '{"text": "Error with API"}'
+                continue
+            try:
+
+                out_message = out_response["choices"][0]["message"]["content"]
+                ptn = r"```json\s*([\s\S]*?)\s*```"
+                matches = re.findall(ptn, out_message)
+
+                if not matches:
+                    y_pred = OrderList.model_validate_json(out_message)
+                else:
+                    y_pred = OrderList.model_validate_json(matches[0])
+
+                pred = y_pred.model_dump_json()
+            except Exception as e:
+                print(e)
+                print("Error in response:", out_response)
+                pred = out_response
+
+            f.write(f"{row['id']},{pred}\n")
+
+    return dataset
 
 
 def eval_on_api():
