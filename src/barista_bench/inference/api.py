@@ -1,45 +1,32 @@
+"""
+OpenRouter API inference for the Barista Bench task.
+
+Provides primitives for calling OpenRouter and higher-level functions
+for evaluating on training data and generating Kaggle submissions.
+"""
+
 import json
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import requests
 from tqdm import tqdm
 
-from ..models.load_model import load_pretrained_model
 from ..prompt.default import BaristaPrompt
-from ..schema import Order, OrderList
+from ..schema import OrderList
+from ..scoring import loss_fn
 
 _OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 _JSON_BLOCK_RE = re.compile(r"```json\s*([\s\S]*?)\s*```")
 
 
-def order_loss(y_true: Order, y_pred: Order) -> float:
-    loss = 0
-    loss += (y_true.name != y_pred.name) * 5
-    loss += (y_true.size != y_pred.size)
-    loss += abs(y_true.quantity - y_pred.quantity)
-    loss += len(set(y_true.modifiers) ^ set(y_pred.modifiers)) * 0.25
-    return loss
-
-
-def loss_fn(y_true: OrderList, y_pred: OrderList) -> float:
-    total_loss = abs(y_true.total_price - y_pred.total_price)
-    for item in y_true.items:
-        total_loss += min(order_loss(item, item2) for item2 in y_pred.items)
-    return total_loss
-
-
-def load_training_set(train_path: str) -> pd.DataFrame:
-    return pd.read_csv(train_path)
-
-
 # ---------------------------------------------------------------------------
 # OpenRouter primitives
 # ---------------------------------------------------------------------------
+
 
 def _build_payload(
     model_id: str,
@@ -98,6 +85,11 @@ def _run_single(
         return row_id, None, response
 
 
+# ---------------------------------------------------------------------------
+# High-level evaluation / submission
+# ---------------------------------------------------------------------------
+
+
 def evaluate_api_model(
     model_id: str,
     prompt: BaristaPrompt,
@@ -129,8 +121,8 @@ def evaluate_api_model(
     rows = list(dataset.iterrows())
 
     def process(args):
-        idx, (_, row) = args
-        row_id, order_list, err = _run_single(
+        idx, row = args
+        _, order_list, err = _run_single(
             row.get("id", idx), row["order"], model_id, prompt, reasoning, provider
         )
         return idx, order_list, err, row["expected_order"]
@@ -148,8 +140,6 @@ def evaluate_api_model(
     dataset["pred"] = preds
     dataset["loss"] = losses
     return dataset
-
-
 
 
 def generate_api_submission(
@@ -173,7 +163,7 @@ def generate_api_submission(
         max_workers (int, optional): Max Concurrency. Defaults to 8.
 
     Returns:
-        pd.DataFrame: _description_
+        pd.DataFrame: Output DataFrame
     """
     dataset = dataset.copy()
 
@@ -198,7 +188,6 @@ def generate_api_submission(
         if not num_lines:
             f.write("id,predicted_json\n")
 
-        # executor.map preserves submission order, safe to write sequentially
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             for row_id, pred in tqdm(executor.map(process, rows), total=len(rows)):
                 f.write(f"{row_id},{pred}\n")
