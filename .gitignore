@@ -1,3 +1,8 @@
+# My Ignores
+
+reference/
+
+
 __pycache__/
 *.py[codz]
 *$py.class

@@ -17,6 +17,10 @@ dependencies = [
     "seaborn>=0.13.2",
     "torch>=2.10.0",
     "transformers>=5.1.0",
+    "datasets>=3.0.0",
+    "peft>=0.14.0",
+    "trl>=0.13.0",
+    "bitsandbytes>=0.45.0",
 ]
 [build-system]
 requires = ["hatchling"]
